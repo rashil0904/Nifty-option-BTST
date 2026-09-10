@@ -80,6 +80,22 @@ class KiteDataClient:
             self.INDIA_VIX_INSTRUMENT_TOKEN, target_date, time(15, 14)
         ).close
 
+    # --- positions ---------------------------------------------------------
+
+    def get_open_nifty_option_positions(self) -> list[dict]:
+        """
+        Live net NIFTY option positions with nonzero quantity. Read-only --
+        does not close, modify, or place anything.
+        """
+        positions = self.kite.positions()
+        return [
+            row
+            for row in positions["net"]
+            if row["tradingsymbol"].startswith("NIFTY")
+            and row["exchange"] == "NFO"
+            and row["quantity"] != 0
+        ]
+
     # --- instrument master ----------------------------------------------
 
     def _nfo_instruments(self) -> list[dict]:
