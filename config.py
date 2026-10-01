@@ -52,6 +52,15 @@ WEEKLY_EXPIRY_WEEKDAY = 1  # Tuesday
 EXIT_TIME_HOUR = 9
 EXIT_TIME_MINUTE = 18
 
+# --- Market holidays -------------------------------------------------------
+# Weekdays the live scripts must NOT trade (add NSE holidays here as they
+# come up; there is no holiday calendar feed).
+from datetime import date
+
+MARKET_HOLIDAYS = {
+    date(2026, 10, 2),  # Gandhi Jayanti
+}
+
 # --- Entry ---------------------------------------------------------------
 ENTRY_TIME_HOUR = 15
 ENTRY_TIME_MINUTE = 15

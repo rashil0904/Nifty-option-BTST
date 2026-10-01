@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dotenv import load_dotenv
 
+from config import MARKET_HOLIDAYS
 from jainam.broker.order_exec import execute_order
 from jainam.broker.xts_client import XTSDataClient
 from position_store import read_position, update_position
@@ -44,6 +45,9 @@ def main() -> int:
     if os.environ.get("JAINAM_LIVE", "").lower() != "true":
         print("JAINAM_LIVE is not 'true' in .env -> refusing to trade.")
         return 1
+    if today.weekday() >= 5 or today in MARKET_HOLIDAYS:
+        print("Weekend/market holiday -> nothing to do (an open position waits for the next trading day).")
+        return 0
     if not (EXIT_WINDOW[0] <= now.time() <= EXIT_WINDOW[1]):
         print(f"Outside the exit window {EXIT_WINDOW[0]}-{EXIT_WINDOW[1]} IST -> refusing to trade.")
         return 1

@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dotenv import load_dotenv
 
-from config import LONG_LEG_LOTS_PER_UNIT, SHORT_LEG_LOTS_PER_UNIT
+from config import LONG_LEG_LOTS_PER_UNIT, MARKET_HOLIDAYS, SHORT_LEG_LOTS_PER_UNIT
 from jainam.broker.order_exec import execute_order
 from jainam.broker.xts_client import XTSDataClient
 from jainam.entry_signal import NoTrade, compute_entry_signal
@@ -40,8 +40,8 @@ def main() -> int:
     if os.environ.get("JAINAM_LIVE", "").lower() != "true":
         print("JAINAM_LIVE is not 'true' in .env -> refusing to trade.")
         return 1
-    if today.weekday() >= 5:
-        print("Weekend -> nothing to do.")
+    if today.weekday() >= 5 or today in MARKET_HOLIDAYS:
+        print("Weekend/market holiday -> nothing to do.")
         return 0
     if not (ENTRY_WINDOW[0] <= now.time() <= ENTRY_WINDOW[1]):
         print(f"Outside the entry window {ENTRY_WINDOW[0]}-{ENTRY_WINDOW[1]} IST -> refusing to trade.")
