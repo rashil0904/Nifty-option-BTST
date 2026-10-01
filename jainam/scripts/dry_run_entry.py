@@ -6,6 +6,11 @@ data and runs it through the pure strategy functions in strategy/, then
 prints what the strategy *would* do. Nothing here touches a broker
 order endpoint.
 
+Writes the outcome to positions.json (see position_store.py) -- either
+the resolved legs (instrument tokens included, so the exit script
+never needs to re-resolve or replay anything) or a no-trade marker
+with the reason. Overwrites whatever was there before.
+
 Run at/after 15:15 IST (before that, today's 15:14 candle won't exist
 yet and this will raise CandleNotFoundError -- that's intentional,
 not a bug to work around).
@@ -28,6 +33,7 @@ from config import (
     WEEKLY_EXPIRY_WEEKDAY,
 )
 from jainam.broker.xts_client import XTSDataClient
+from position_store import PositionLeg, write_no_trade, write_position
 from strategy.direction import Direction, determine_direction
 from strategy.expiry import compute_entry_expiry
 from strategy.plan import build_entry_plan
@@ -48,6 +54,7 @@ def main() -> None:
     print(f"India VIX: {vix}")
     if should_skip_day(vix):
         print(f"VIX {vix} is within [17, 19] -> SKIP DAY, no trade.")
+        write_no_trade(today, f"VIX {vix} in skip band [17,19]")
         return
     print("VIX outside skip band -> proceeding.\n")
 
@@ -64,6 +71,7 @@ def main() -> None:
 
     if direction is Direction.FLAT:
         print("FLAT -> no trade today.")
+        write_no_trade(today, "direction FLAT")
         return
 
     spot_close_1514 = client.get_nifty_spot_1514_close(today)
@@ -105,7 +113,26 @@ def main() -> None:
             f"  {leg.role.value}: {option_type} {leg.strike} exp {leg.expiry} "
             f"-- {leg.lots} lot(s) x {leg.lot_size} = {leg.quantity} qty"
         )
-    print("\nNo order was placed. This was a read-only dry run.")
+
+    resolved_by_role = {"LONG_ATM": atm_instrument, "SHORT_OTM": otm_instrument}
+    write_position(
+        entry_date=today,
+        direction=direction.value,
+        option_type=option_type,
+        expiry=expiry,
+        legs=[
+            PositionLeg(
+                role=leg.role.value,
+                strike=leg.strike,
+                instrument_token=resolved_by_role[leg.role.value]["instrument_token"],
+                tradingsymbol=resolved_by_role[leg.role.value]["tradingsymbol"],
+                quantity=leg.quantity,
+            )
+            for leg in plan.legs
+        ],
+    )
+    print(f"\nPosition written to {Path(__file__).resolve().parent.parent.parent / 'positions.json'}")
+    print("No order was placed. This was a read-only dry run.")
 
 
 if __name__ == "__main__":
