@@ -3,13 +3,12 @@ Read-only dry run of the 09:18 unconditional exit, using real Jainam
 (XTS) data -- Market Data API only, no Interactive API required.
 
 This project never places real orders, so there is no real broker
-position to query in the first place -- the Kite version's exit script
-asks the broker "what's open"; this one instead REPLAYS the previous
-trading day's entry signal (same logic as dry_run_entry.py) to figure
-out what position would exist, then fetches the CURRENT live price for
-those same legs. That's why this doesn't need Interactive API: it
-never queries account state, only market data for instruments it
-already knows how to resolve.
+position to query in the first place -- instead this REPLAYS the
+previous trading day's entry signal (same logic as dry_run_entry.py)
+to figure out what position would exist, then fetches the CURRENT live
+price for those same legs. That's why this doesn't need Interactive
+API: it never queries account state, only market data for instruments
+it already knows how to resolve.
 
 DOES NOT PLACE, MODIFY, OR CANCEL ANY ORDER. There is deliberately NO
 P&L check and NO stop loss -- per spec, the real exit is unconditional

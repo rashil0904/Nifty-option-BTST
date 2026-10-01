@@ -6,46 +6,49 @@ the documented REST endpoints directly with `requests` -- it does not
 vendor Symphony's own Python SDK (github.com/symphonyfintech/xts-pythonclient-api-sdk),
 since that repo carries no open-source license despite being public.
 
-VERIFIED against a live Jainam session on 2026-09-30 (base URL
-https://smpd.jainam.in:3643):
-  - Market Data login path is `/apibinarymarketdata/auth/login` --
-    confirmed live. This matches the prose docs at
-    developers.symphonyfintech.in, NOT the generic reference SDK's
-    route table (which uses `/apimarketdata/...` without "binary") --
-    the SDK was wrong for this deployment, the docs were right. All
-    `/apibinarymarketdata/...` paths below follow from that same login
-    path by analogy (only login itself was directly confirmed).
-  - `/interactive/user/session` returns a real structured XTS response
-    (not a 404) for this host, confirming the path -- but the
-    JAINAM_INTERACTIVE_API_KEY/SECRET in use were rejected with
-    "Entered invalid credentials". Positions/orders (interactive API)
-    are UNTESTED beyond that -- get_open_nifty_option_positions() has
-    never successfully run. Likely needs a separate Interactive-scoped
-    key pair from Jainam, distinct from the Market Data one.
-
 Deliberately no order placement/status/cancel here yet -- this is the
-dry-run/data-fetch phase only, mirroring broker/kite_client.py. All
-methods either return real data or raise clearly; nothing here guesses
-a symbol or silently falls back.
+dry-run/data-fetch phase only. All methods either return real data or
+raise clearly; nothing here guesses a symbol or silently falls back.
 
-STILL UNVERIFIED (market-data login works, but these specific calls
-haven't been exercised against live data yet):
-  - OHLC candle parsing (`get_candle_at`): the docs only show a
-    single-candle example response (`dataReponse` as one pipe-delimited
-    string). The separator between multiple candles in a multi-candle
-    response (comma vs newline) is not documented -- this code assumes
-    comma-separated rows. Verify against a real response.
-  - OHLC candle timestamp: assumed to be a true Unix epoch (UTC)
-    second, converted to IST for comparison -- same unverified
-    assumption flagged in kite_client.py's IST_CANDLE_TZ_NOTE, must be
-    checked against a known historical value before trusting it live.
-  - `compressionValue=60` for 1-minute candles: the docs list both a
-    label ("In1Minute (60)") and bare seconds elsewhere; this code
-    sends the bare numeric string "60".
-  - GetStrikePrice (`resolve_nifty_option_grid`): not in the reference
-    SDK's route table at all, only in the prose docs -- given the SDK
-    was already caught being wrong once above, treat this path as
-    especially unverified until exercised live.
+VERIFIED against a live Jainam session on 2026-09-30/10-01 (base URL
+https://smpd.jainam.in:3643) -- entry-side signal resolution runs
+clean end-to-end against real data:
+  - Market Data login path is `/apibinarymarketdata/auth/login` (the
+    generic reference SDK's route table uses `/apimarketdata/...`
+    without "binary" -- that's wrong for this deployment; the prose
+    docs at developers.symphonyfintech.in were right).
+  - `futureSymbol`/`optionsymbol` responses are a list-of-one, not a
+    bare object like the docs' examples show.
+  - OHLC `dataReponse` is comma-separated pipe-delimited rows. Each
+    row's timestamp is IST wall-clock time encoded as a pseudo-epoch
+    (reading it with a UTC offset recovers the correct IST clock time
+    directly -- no +5:30 conversion needed), stamped at :59 seconds
+    (end of minute) not :00 -- see get_candle_at()'s docstring.
+  - GetStrikePrice (`resolve_nifty_option_grid`) works live despite
+    not being in the reference SDK's route table at all (only in the
+    prose docs).
+
+STILL UNVERIFIED / KNOWN GAPS:
+  - Interactive API: `/interactive/user/session` returns a real
+    structured XTS response (confirming the path), but the
+    JAINAM_INTERACTIVE_API_KEY/SECRET in use were rejected with
+    "Entered invalid credentials". get_open_nifty_option_positions()
+    has never successfully run -- likely needs a separate
+    Interactive-scoped key pair from Jainam, distinct from the Market
+    Data one. jainam/scripts/dry_run_exit.py works around this by
+    never calling it (replays the prior day's signal instead of
+    querying real positions).
+  - get_option_ltp() / `_quote_ltp` for NSEFO (futures/options)
+    instruments returned an empty `listQuotes` when tested after
+    market hours on 2026-10-01, even right after explicitly
+    subscribing -- while the VIX index quote (NSECM segment) worked
+    fine after-hours in the same session. Not yet retested during live
+    market hours, so it's unclear whether this is a closed-market
+    caching gap or a segment entitlement issue.
+  - `compressionValue=60` for 1-minute OHLC candles: the docs list
+    both a label ("In1Minute (60)") and bare seconds elsewhere; this
+    code sends the bare numeric string "60" -- worked in testing, not
+    exhaustively confirmed against every compression value.
 """
 
 import os

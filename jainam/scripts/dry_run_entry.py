@@ -4,8 +4,7 @@ Read-only dry run of the 15:15 entry signal, using real Jainam (XTS) data.
 DOES NOT PLACE, MODIFY, OR CANCEL ANY ORDER. It fetches real market
 data and runs it through the pure strategy functions in strategy/, then
 prints what the strategy *would* do. Nothing here touches a broker
-order endpoint. Mirrors scripts/dry_run_entry.py (the Kite version) --
-same strategy logic, different broker client.
+order endpoint.
 
 Run at/after 15:15 IST (before that, today's 15:14 candle won't exist
 yet and this will raise CandleNotFoundError -- that's intentional,
