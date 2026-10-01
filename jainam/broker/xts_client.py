@@ -5,26 +5,32 @@ Jainam white-labels Symphony Fintech's XTS Connect API. This talks to
 the documented REST endpoints directly with `requests` -- it does not
 vendor Symphony's own Python SDK (github.com/symphonyfintech/xts-pythonclient-api-sdk),
 since that repo carries no open-source license despite being public.
-The route paths and request/response shapes below were cross-checked
-against that SDK's source (the authoritative route table) rather than
-taken solely from the prose docs at developers.symphonyfintech.in,
-where the two disagreed (e.g. the docs page shows a login path of
-`/1interactive/user/session`; the SDK's route table -- what real
-broker integrations actually run against -- uses `/interactive/user/session`).
+
+VERIFIED against a live Jainam session on 2026-09-30 (base URL
+https://smpd.jainam.in:3643):
+  - Market Data login path is `/apibinarymarketdata/auth/login` --
+    confirmed live. This matches the prose docs at
+    developers.symphonyfintech.in, NOT the generic reference SDK's
+    route table (which uses `/apimarketdata/...` without "binary") --
+    the SDK was wrong for this deployment, the docs were right. All
+    `/apibinarymarketdata/...` paths below follow from that same login
+    path by analogy (only login itself was directly confirmed).
+  - `/interactive/user/session` returns a real structured XTS response
+    (not a 404) for this host, confirming the path -- but the
+    JAINAM_INTERACTIVE_API_KEY/SECRET in use were rejected with
+    "Entered invalid credentials". Positions/orders (interactive API)
+    are UNTESTED beyond that -- get_open_nifty_option_positions() has
+    never successfully run. Likely needs a separate Interactive-scoped
+    key pair from Jainam, distinct from the Market Data one.
 
 Deliberately no order placement/status/cancel here yet -- this is the
 dry-run/data-fetch phase only, mirroring broker/kite_client.py. All
 methods either return real data or raise clearly; nothing here guesses
 a symbol or silently falls back.
 
-CONFIRM BEFORE LIVE -- built from API documentation only, no live
-Jainam session was available to test against, unlike kite_client.py
-(which was verified against a real Kite session). Before trusting this
-for real dry runs:
-  - JAINAM_BASE_URL must be Jainam's own production host (obtained from
-    their API dashboard once you register) -- developers.symphonyfintech.in
-    is Symphony's own dev sandbox, not Jainam's live endpoint.
-  - OHLC candle parsing (`_parse_ohlc_candles`): the docs only show a
+STILL UNVERIFIED (market-data login works, but these specific calls
+haven't been exercised against live data yet):
+  - OHLC candle parsing (`get_candle_at`): the docs only show a
     single-candle example response (`dataReponse` as one pipe-delimited
     string). The separator between multiple candles in a multi-candle
     response (comma vs newline) is not documented -- this code assumes
@@ -36,11 +42,15 @@ for real dry runs:
   - `compressionValue=60` for 1-minute candles: the docs list both a
     label ("In1Minute (60)") and bare seconds elsewhere; this code
     sends the bare numeric string "60".
+  - GetStrikePrice (`resolve_nifty_option_grid`): not in the reference
+    SDK's route table at all, only in the prose docs -- given the SDK
+    was already caught being wrong once above, treat this path as
+    especially unverified until exercised live.
 """
 
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 import requests
@@ -80,15 +90,24 @@ def _fmt_ohlc_time(dt: datetime) -> str:
 
 
 class XTSDataClient:
-    def __init__(self, base_url: str, market_token: str, interactive_token: str):
+    def __init__(self, base_url: str, market_token: str, interactive_token: str | None):
         self.base_url = base_url.rstrip("/")
         self.market_token = market_token
         self.interactive_token = interactive_token
+        self._interactive_error: str | None = None
         self._session = requests.Session()
         self._index_list_cache: dict[int, dict[str, int]] = {}
 
     @classmethod
     def from_env(cls, env_path: str | None = None) -> "XTSDataClient":
+        """
+        Logs into Market Data (required -- entry signal needs it) and,
+        if Interactive credentials are present, Interactive too (needed
+        only for get_open_nifty_option_positions). A failed or missing
+        Interactive login does NOT raise here -- it's deferred until a
+        method that actually needs it is called, so market-data-only
+        usage (the entry dry run) isn't blocked by it.
+        """
         load_dotenv(env_path)
         base_url = os.environ.get("JAINAM_BASE_URL")
         market_api_key = os.environ.get("JAINAM_MARKET_API_KEY")
@@ -101,8 +120,6 @@ class XTSDataClient:
             "JAINAM_BASE_URL": base_url,
             "JAINAM_MARKET_API_KEY": market_api_key,
             "JAINAM_MARKET_API_SECRET": market_api_secret,
-            "JAINAM_INTERACTIVE_API_KEY": interactive_api_key,
-            "JAINAM_INTERACTIVE_API_SECRET": interactive_api_secret,
         }
         missing = [name for name, val in required.items() if not val]
         if missing:
@@ -110,13 +127,24 @@ class XTSDataClient:
 
         session = requests.Session()
         market_token = _login(
-            session, base_url, "/apimarketdata/auth/login", market_api_key, market_api_secret, source
+            session, base_url, "/apibinarymarketdata/auth/login", market_api_key, market_api_secret, source
         )
-        interactive_token = _login(
-            session, base_url, "/interactive/user/session", interactive_api_key, interactive_api_secret, source
-        )
+
+        interactive_token = None
+        interactive_error = None
+        if interactive_api_key and interactive_api_secret:
+            try:
+                interactive_token = _login(
+                    session, base_url, "/interactive/user/session", interactive_api_key, interactive_api_secret, source
+                )
+            except Exception as exc:  # noqa: BLE001 -- deliberately deferred, see docstring
+                interactive_error = str(exc)
+        else:
+            interactive_error = "JAINAM_INTERACTIVE_API_KEY/SECRET not set in .env"
+
         client = cls(base_url=base_url, market_token=market_token, interactive_token=interactive_token)
         client._session = session
+        client._interactive_error = interactive_error
         return client
 
     # --- low-level request helpers ----------------------------------------
@@ -135,7 +163,7 @@ class XTSDataClient:
     def _index_list(self, exchange_segment: int) -> dict[str, int]:
         """Name -> exchangeInstrumentID for all indices in a segment, e.g. 'INDIA VIX' -> 26002."""
         if exchange_segment not in self._index_list_cache:
-            data = self._market_get("/apimarketdata/instruments/indexlist", {"exchangeSegment": exchange_segment})
+            data = self._market_get("/apibinarymarketdata/instruments/indexlist", {"exchangeSegment": exchange_segment})
             mapping = {}
             for entry in data["result"]["indexList"]:
                 name, _, instrument_id = entry.rpartition("_")
@@ -145,7 +173,7 @@ class XTSDataClient:
 
     def _quote_ltp(self, exchange_segment: int, exchange_instrument_id: int) -> float:
         data = self._market_post(
-            "/apimarketdata/instruments/quotes",
+            "/apibinarymarketdata/instruments/quotes",
             {
                 "instruments": [
                     {"exchangeSegment": exchange_segment, "exchangeInstrumentID": exchange_instrument_id}
@@ -179,7 +207,7 @@ class XTSDataClient:
     def get_nifty_fut_instrument(self, as_of: date) -> dict:
         """Resolve the current (nearest-unexpired) NIFTY futures contract as of the given date."""
         data = self._market_get(
-            "/apimarketdata/instruments/instrument/expiryDate",
+            "/apibinarymarketdata/instruments/instrument/expiryDate",
             {"exchangeSegment": NSE_FO_SEGMENT, "series": "FUTIDX", "symbol": "NIFTY"},
         )
         expiries = [datetime.fromisoformat(e).date() for e in data["result"]]
@@ -189,7 +217,7 @@ class XTSDataClient:
         nearest_expiry = candidates[0]
 
         data = self._market_get(
-            "/apimarketdata/instruments/instrument/futureSymbol",
+            "/apibinarymarketdata/instruments/instrument/futureSymbol",
             {
                 "exchangeSegment": NSE_FO_SEGMENT,
                 "series": "FUTIDX",
@@ -197,7 +225,10 @@ class XTSDataClient:
                 "expiryDate": _fmt_expiry(nearest_expiry),
             },
         )
-        result = data["result"]
+        results = data["result"]
+        if not results:
+            raise InstrumentNotFoundError(f"No NIFTY future found for expiry {nearest_expiry}")
+        result = results[0]
         return {
             "tradingsymbol": result["Description"],
             "instrument_token": result["ExchangeInstrumentID"],
@@ -215,7 +246,7 @@ class XTSDataClient:
         on it live.
         """
         data = self._market_get(
-            "/apimarketdata/instruments/instrument/strikePrice",
+            "/apibinarymarketdata/instruments/instrument/strikePrice",
             {
                 "exchangeSegment": NSE_FO_SEGMENT,
                 "series": "OPTIDX",
@@ -242,7 +273,7 @@ class XTSDataClient:
         if option_type not in ("CE", "PE"):
             raise ValueError(f"option_type must be CE or PE, got {option_type!r}")
         data = self._market_get(
-            "/apimarketdata/instruments/instrument/optionsymbol",
+            "/apibinarymarketdata/instruments/instrument/optionsymbol",
             {
                 "exchangeSegment": NSE_FO_SEGMENT,
                 "series": "OPTIDX",
@@ -252,11 +283,12 @@ class XTSDataClient:
                 "strikePrice": strike,
             },
         )
-        result = data.get("result")
-        if not result:
+        results = data.get("result")
+        if not results:
             raise InstrumentNotFoundError(
                 f"No NIFTY {option_type} found for strike={strike} expiry={expiry}"
             )
+        result = results[0]
         return {
             "tradingsymbol": result["Description"],
             "instrument_token": result["ExchangeInstrumentID"],
@@ -267,14 +299,23 @@ class XTSDataClient:
 
     def get_candle_at(self, exchange_segment: int, exchange_instrument_id: int, target_date: date, target_time: time) -> Candle:
         """
-        Fetch the 1-minute candle whose start timestamp is exactly
-        target_date + target_time. Raises CandleNotFoundError if the OHLC
-        response doesn't contain that exact minute.
+        Fetch the 1-minute candle covering target_date + target_time.
+        Raises CandleNotFoundError if the OHLC response doesn't contain
+        that minute.
+
+        VERIFIED live on 2026-10-01: `dataReponse` is a comma-separated
+        list of pipe-delimited rows (timestamp|O|H|L|C|volume|OI|). The
+        timestamp is NOT a true Unix/UTC epoch -- it's the IST
+        wall-clock time encoded as if it were a UTC epoch (i.e. reading
+        it with a UTC offset recovers the correct IST clock time
+        directly, no +5:30 conversion needed). Each row is also stamped
+        at :59 seconds (end of its minute), not :00 -- so matching is
+        done by (date, hour, minute), ignoring seconds.
         """
         start_dt = datetime.combine(target_date, time(9, 0))
         end_dt = datetime.combine(target_date, time(15, 30))
         data = self._market_get(
-            "/apimarketdata/instruments/ohlc",
+            "/apibinarymarketdata/instruments/ohlc",
             {
                 "exchangeSegment": exchange_segment,
                 "exchangeInstrumentID": exchange_instrument_id,
@@ -284,13 +325,12 @@ class XTSDataClient:
             },
         )
         raw = data["result"]["dataReponse"]
-        target_dt = datetime.combine(target_date, target_time, tzinfo=IST)
         for row in raw.split(","):
             fields = row.split("|")
             if len(fields) < 5 or not fields[0]:
                 continue
-            row_dt = datetime.fromtimestamp(int(fields[0]), tz=IST)
-            if row_dt == target_dt:
+            row_dt = datetime.fromtimestamp(int(fields[0]), tz=timezone.utc).replace(tzinfo=IST)
+            if (row_dt.date(), row_dt.hour, row_dt.minute) == (target_date, target_time.hour, target_time.minute):
                 return Candle(
                     timestamp=row_dt,
                     open=float(fields[1]),
@@ -299,7 +339,7 @@ class XTSDataClient:
                     close=float(fields[4]),
                 )
         raise CandleNotFoundError(
-            f"No candle found starting at {target_dt} for instrument {exchange_instrument_id}"
+            f"No candle found for {target_date} {target_time} for instrument {exchange_instrument_id}"
         )
 
     def get_nifty_fut_open_0915(self, target_date: date, exchange_instrument_id: int) -> float:
@@ -322,6 +362,10 @@ class XTSDataClient:
 
     def get_open_nifty_option_positions(self) -> list[dict]:
         """Live net NIFTY option positions with nonzero quantity. Read-only."""
+        if not self.interactive_token:
+            raise RuntimeError(
+                f"Interactive API session not available: {self._interactive_error}"
+            )
         data = self._interactive_get("/interactive/portfolio/positions", {"dayOrNet": "NetWise"})
         rows = data.get("result") or []
         return [
