@@ -8,16 +8,16 @@ against live/broker data before this trades real capital.
 """
 
 # --- VIX filter -------------------------------------------------------
-# Skip the trading day entirely if India VIX (checked once, at 15:15)
+# Skip the trading day entirely if India VIX (checked once, at 15:20)
 # falls in this inclusive range.
 VIX_SKIP_LOW = 17.0
 VIX_SKIP_HIGH = 19.0
 
 # --- Direction signal ---------------------------------------------------
-# Nifty Future 15:14 candle close vs Nifty Future 09:15 candle open.
+# Nifty Future 15:19 candle close vs Nifty Future 09:15 candle open.
 # CONFIRM BEFORE LIVE: verify the data source's candle-labeling convention
-# (does "15:14 candle" mean the candle timestamped 15:14:00 covering
-# 15:14:00-15:15:00?) against a known historical value before trusting
+# (does "15:19 candle" mean the candle timestamped 15:19:00 covering
+# 15:19:00-15:20:00?) against a known historical value before trusting
 # this signal live. This module only implements the comparison; reading
 # the actual candle is a broker-layer concern (not built yet).
 
@@ -63,4 +63,4 @@ MARKET_HOLIDAYS = {
 
 # --- Entry ---------------------------------------------------------------
 ENTRY_TIME_HOUR = 15
-ENTRY_TIME_MINUTE = 15
+ENTRY_TIME_MINUTE = 20

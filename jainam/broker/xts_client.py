@@ -212,12 +212,12 @@ class XTSDataClient:
             raise InstrumentNotFoundError("INDIA VIX not found in NSECM index list")
         return self._quote_ltp(NSE_CM_SEGMENT, indices["INDIA VIX"])
 
-    def get_historical_vix_at_1515(self, target_date: date) -> float:
-        """Approximate 'VIX at 15:15' for a past date via the 15:14 candle close, for replay."""
+    def get_historical_vix_at_1520(self, target_date: date) -> float:
+        """Approximate 'VIX at 15:20' for a past date via the 15:19 candle close, for replay."""
         indices = self._index_list(NSE_CM_SEGMENT)
         if "INDIA VIX" not in indices:
             raise InstrumentNotFoundError("INDIA VIX not found in NSECM index list")
-        return self.get_candle_at(NSE_CM_SEGMENT, indices["INDIA VIX"], target_date, time(15, 14)).close
+        return self.get_candle_at(NSE_CM_SEGMENT, indices["INDIA VIX"], target_date, time(15, 19)).close
 
     def get_option_ltp(self, exchange_instrument_id: int) -> float:
         """Live last-traded price for a resolved NFO option instrument."""
@@ -366,17 +366,17 @@ class XTSDataClient:
     def get_nifty_fut_open_0915(self, target_date: date, exchange_instrument_id: int) -> float:
         return self.get_candle_at(NSE_FO_SEGMENT, exchange_instrument_id, target_date, time(9, 15)).open
 
-    def get_nifty_fut_1514_close(self, target_date: date, exchange_instrument_id: int) -> float:
-        return self.get_candle_at(NSE_FO_SEGMENT, exchange_instrument_id, target_date, time(15, 14)).close
+    def get_nifty_fut_1519_close(self, target_date: date, exchange_instrument_id: int) -> float:
+        return self.get_candle_at(NSE_FO_SEGMENT, exchange_instrument_id, target_date, time(15, 19)).close
 
     # --- spot (for ATM strike selection) ----------------------------------
 
-    def get_nifty_spot_1514_close(self, target_date: date) -> float:
+    def get_nifty_spot_1519_close(self, target_date: date) -> float:
         indices = self._index_list(NSE_CM_SEGMENT)
         if "NIFTY 50" not in indices:
             raise InstrumentNotFoundError("NIFTY 50 not found in NSECM index list")
         return self.get_candle_at(
-            NSE_CM_SEGMENT, indices["NIFTY 50"], target_date, time(15, 14)
+            NSE_CM_SEGMENT, indices["NIFTY 50"], target_date, time(15, 19)
         ).close
 
     # --- positions ---------------------------------------------------------

@@ -1,5 +1,5 @@
 """
-LIVE 15:15 entry -- PLACES REAL ORDERS on Jainam (client from JAINAM_CLIENT_ID).
+LIVE 15:20 entry -- PLACES REAL ORDERS on Jainam (client from JAINAM_CLIENT_ID).
 
 Refuses to run unless JAINAM_LIVE=true in .env. Order of operations:
   1. BUY the ATM leg (2 lots). Wait for the fill.
@@ -28,7 +28,11 @@ from jainam.entry_signal import NoTrade, compute_entry_signal
 from position_store import PositionLeg, read_position, write_no_trade, write_position
 
 IST = ZoneInfo("Asia/Kolkata")
-ENTRY_WINDOW = (time(15, 14), time(15, 27))  # market closes 15:30; don't start late
+# Starts at 15:19 (when the signal candle settles), ends 15:27 (same 3-minute
+# safety buffer before the 15:30 close as before) -- moving entry 5 minutes
+# later naturally shrinks the execution buffer from 13 to 8 minutes for the
+# buy-then-sell sequence with retries.
+ENTRY_WINDOW = (time(15, 19), time(15, 27))
 
 
 def main() -> int:

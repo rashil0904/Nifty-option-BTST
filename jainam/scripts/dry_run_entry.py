@@ -1,5 +1,5 @@
 """
-Read-only dry run of the 15:15 entry signal, using real Jainam (XTS) data.
+Read-only dry run of the 15:20 entry signal, using real Jainam (XTS) data.
 
 DOES NOT PLACE, MODIFY, OR CANCEL ANY ORDER. It fetches real market
 data and runs it through the pure strategy functions in strategy/, then
@@ -11,7 +11,7 @@ the resolved legs (instrument tokens included, so the exit script
 never needs to re-resolve or replay anything) or a no-trade marker
 with the reason. Overwrites whatever was there before.
 
-Run at/after 15:15 IST (before that, today's 15:14 candle won't exist
+Run at/after 15:20 IST (before that, today's 15:19 candle won't exist
 yet and this will raise CandleNotFoundError -- that's intentional,
 not a bug to work around).
 
@@ -62,11 +62,11 @@ def main() -> None:
     print(f"Nifty Fut contract: {fut['tradingsymbol']} (token {fut['instrument_token']}, expiry {fut['expiry']})")
 
     open_0915 = client.get_nifty_fut_open_0915(today, fut["instrument_token"])
-    close_1514 = client.get_nifty_fut_1514_close(today, fut["instrument_token"])
+    close_1519 = client.get_nifty_fut_1519_close(today, fut["instrument_token"])
     print(f"09:15 open: {open_0915}")
-    print(f"15:14 close: {close_1514}")
+    print(f"15:19 close: {close_1519}")
 
-    direction = determine_direction(close_1514, open_0915)
+    direction = determine_direction(close_1519, open_0915)
     print(f"Direction: {direction.value}\n")
 
     if direction is Direction.FLAT:
@@ -74,8 +74,8 @@ def main() -> None:
         write_no_trade(today, "direction FLAT")
         return
 
-    spot_close_1514 = client.get_nifty_spot_1514_close(today)
-    print(f"Nifty Spot 15:14 close (used for ATM strike): {spot_close_1514}")
+    spot_close_1519 = client.get_nifty_spot_1519_close(today)
+    print(f"Nifty Spot 15:19 close (used for ATM strike): {spot_close_1519}")
 
     expiry = compute_entry_expiry(today, WEEKLY_EXPIRY_WEEKDAY)
     print(f"Expiry: {expiry}")
@@ -83,7 +83,7 @@ def main() -> None:
     strike_interval, lot_size = client.resolve_nifty_option_grid(expiry)
     print(f"Strike interval: {strike_interval}, lot size: {lot_size}")
 
-    atm_strike = calculate_atm_strike(spot_close_1514, strike_interval)
+    atm_strike = calculate_atm_strike(spot_close_1519, strike_interval)
     direction_sign = 1 if direction is Direction.GREEN else -1
     otm_strike = calculate_otm_strike(
         atm_strike, OTM_OFFSET_POINTS, strike_interval, direction_sign=direction_sign

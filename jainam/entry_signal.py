@@ -1,7 +1,7 @@
 """
-The 15:15 entry decision, shared by live_entry.py. Same rules as
-dry_run_entry.py: VIX filter, Nifty Fut 15:14 close vs 09:15 open,
-ATM from spot 15:14 close, OTM offset, 2:1 plan. Read-only market data.
+The 15:20 entry decision, shared by live_entry.py. Same rules as
+dry_run_entry.py: VIX filter, Nifty Fut 15:19 close vs 09:15 open,
+ATM from spot 15:19 close, OTM offset, 2:1 plan. Read-only market data.
 """
 
 from dataclasses import dataclass
@@ -43,21 +43,21 @@ def compute_entry_signal(client, today: date, log=print) -> EntrySignal | NoTrad
 
     fut = client.get_nifty_fut_instrument(today)
     open_0915 = client.get_nifty_fut_open_0915(today, fut["instrument_token"])
-    close_1514 = client.get_nifty_fut_1514_close(today, fut["instrument_token"])
-    direction = determine_direction(close_1514, open_0915)
-    log(f"Nifty Fut {fut['tradingsymbol']}: 09:15 open {open_0915}, 15:14 close {close_1514} -> {direction.value}")
+    close_1519 = client.get_nifty_fut_1519_close(today, fut["instrument_token"])
+    direction = determine_direction(close_1519, open_0915)
+    log(f"Nifty Fut {fut['tradingsymbol']}: 09:15 open {open_0915}, 15:19 close {close_1519} -> {direction.value}")
     if direction is Direction.FLAT:
         return NoTrade("direction FLAT")
 
-    spot_close_1514 = client.get_nifty_spot_1514_close(today)
+    spot_close_1519 = client.get_nifty_spot_1519_close(today)
     expiry = compute_entry_expiry(today, WEEKLY_EXPIRY_WEEKDAY)
     strike_interval, lot_size = client.resolve_nifty_option_grid(expiry)
 
-    atm_strike = calculate_atm_strike(spot_close_1514, strike_interval)
+    atm_strike = calculate_atm_strike(spot_close_1519, strike_interval)
     direction_sign = 1 if direction is Direction.GREEN else -1
     otm_strike = calculate_otm_strike(atm_strike, OTM_OFFSET_POINTS, strike_interval, direction_sign=direction_sign)
     option_type = "CE" if direction is Direction.GREEN else "PE"
-    log(f"Spot 15:14 {spot_close_1514}, expiry {expiry}, ATM {atm_strike}, OTM {otm_strike} ({option_type})")
+    log(f"Spot 15:19 {spot_close_1519}, expiry {expiry}, ATM {atm_strike}, OTM {otm_strike} ({option_type})")
 
     instruments = {
         "LONG_ATM": client.resolve_option_instrument(atm_strike, option_type, expiry),
