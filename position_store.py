@@ -80,6 +80,24 @@ def update_position(**fields) -> None:
     _write(data)
 
 
+def record_leg_exit(role: str, quantity: int, avg_price: float) -> None:
+    """Stamps the exit fill onto the matching entry leg -- exit_quantity,
+    exit_price, exit_timestamp. Needed because the exit script otherwise
+    only ever records closed_roles/status, never the price a leg actually
+    closed at, which makes PnL unrecoverable after the fact."""
+    data = read_position()
+    if data is None:
+        raise RuntimeError("No positions.json to update")
+    for leg in data["legs"]:
+        if leg["role"] == role:
+            leg["exit_quantity"] = quantity
+            leg["exit_price"] = avg_price
+            leg["exit_timestamp"] = datetime.now(IST).isoformat()
+            break
+    data["updated_at"] = datetime.now(IST).isoformat()
+    _write(data)
+
+
 def read_position() -> dict | None:
     """Returns the stored position dict, or None if no file exists yet."""
     if not POSITIONS_PATH.exists():

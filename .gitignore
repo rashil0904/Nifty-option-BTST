@@ -6,3 +6,4 @@ __pycache__/
 *.log
 positions.json
 logs/
+.DS_Store

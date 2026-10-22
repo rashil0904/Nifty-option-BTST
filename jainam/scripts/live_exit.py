@@ -11,6 +11,13 @@ the long leg is left in place (still covering it) and the run stops.
 Unconditional: no P&L check, no stop loss. Limit orders at increasing
 aggression, with a final market order so the exit actually happens.
 
+Once every leg is closed, the trade is archived to results/trade_history.json
+and results/build_pnl.py regenerates+pushes the PnL workbook to Drive (same
+pattern as volume-daily's _sync_pnl_workbook: piggybacked on the trade-closing
+trigger itself, not a separate cron, so a sheet can never go stale between
+"trade closed" and "someone remembered to run the report") -- a failure in
+either step never turns a successful exit into a reported one.
+
     python jainam/scripts/live_exit.py
 """
 
@@ -27,7 +34,9 @@ from dotenv import load_dotenv
 from config import MARKET_HOLIDAYS
 from jainam.broker.order_exec import execute_order
 from jainam.broker.xts_client import XTSDataClient
-from position_store import read_position, update_position
+from position_store import read_position, record_leg_exit, update_position
+from results import build_pnl
+from results.trade_history import append_closed_trade
 
 IST = ZoneInfo("Asia/Kolkata")
 EXIT_WINDOW = (time(9, 15), time(10, 30))
@@ -97,12 +106,18 @@ def main() -> int:
             ok = False
             break
         print(f"    closed {fill.filled} @ avg {fill.avg_price}")
+        record_leg_exit(role, fill.filled, fill.avg_price)
         closed.add(role)
         update_position(closed_roles=sorted(closed))
 
     if ok and closed >= set(legs):
         update_position(status="CLOSED")
         print("\nLIVE EXIT COMPLETE.")
+        try:
+            append_closed_trade(read_position())
+            build_pnl.main()
+        except Exception as exc:  # noqa: BLE001 -- PnL bookkeeping, must never fail a real exit
+            print(f"    WARNING: PnL history/report sync failed ({exc}); trade closed fine regardless.")
         return 0
     return 1
 
