@@ -23,7 +23,7 @@ IST = ZoneInfo("Asia/Kolkata")
 HISTORY_PATH = Path(__file__).resolve().parent / "trade_history.json"
 
 
-def _gross_pnl(legs: dict[str, dict]) -> float | None:
+def gross_pnl(legs: dict[str, dict]) -> float | None:
     long_leg = legs.get("LONG_ATM")
     short_leg = legs.get("SHORT_OTM")
     if not long_leg or not short_leg:
@@ -51,7 +51,7 @@ def append_closed_trade(position: dict) -> dict:
         "expiry": position["expiry"],
         "legs": legs,
         "exit_date": max(exit_dates) if exit_dates else None,
-        "gross_pnl": _gross_pnl(legs),
+        "gross_pnl": gross_pnl(legs),
         "archived_at": datetime.now(IST).isoformat(),
     }
 

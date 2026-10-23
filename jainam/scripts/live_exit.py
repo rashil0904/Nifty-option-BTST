@@ -18,6 +18,12 @@ trigger itself, not a separate cron, so a sheet can never go stale between
 "trade closed" and "someone remembered to run the report") -- a failure in
 either step never turns a successful exit into a reported one.
 
+Also sends a Telegram alert (see notify.py) for every outcome: full
+close (with entry/exit price and gross P&L per leg), or a stopped/
+partial close -- the latter most of all, since that's a legging-risk
+state that needs a human looking at it immediately. A notify failure
+never fails the exit itself.
+
     python jainam/scripts/live_exit.py
 """
 
@@ -34,9 +40,10 @@ from dotenv import load_dotenv
 from config import MARKET_HOLIDAYS
 from jainam.broker.order_exec import execute_order
 from jainam.broker.xts_client import XTSDataClient
+from notify import notify
 from position_store import read_position, record_leg_exit, update_position
 from results import build_pnl
-from results.trade_history import append_closed_trade
+from results.trade_history import append_closed_trade, gross_pnl
 
 IST = ZoneInfo("Asia/Kolkata")
 EXIT_WINDOW = (time(9, 15), time(10, 30))
@@ -92,17 +99,21 @@ def main() -> int:
         net = client.get_net_quantity(token)
         print(f"\n{role}: {leg['tradingsymbol']} recorded qty {qty}, account net {net:+d}")
         if net * sign < qty:
-            print(f"!! Account holds {net:+d} but {sign * qty:+d} was expected -> NOT trading this leg. Review manually.")
+            msg = f"Account holds {net:+d} but {sign * qty:+d} was expected -> NOT trading {role}. Review manually."
+            print(f"!! {msg}")
+            notify(f"*NIFTY BTST — EXIT STOPPED* ({today}, {position['entry_date']})\n{msg}")
             ok = False
             break
 
         print(f"{side} {qty} {leg['tradingsymbol']}")
         fill = execute_order(client, token, side, qty, tag + role[0], allow_market_fallback=True)
         if not fill.complete:
-            print(
-                f"!! {role} closed only {fill.filled}/{qty} ({fill.rejected_reason or 'unfilled'}). "
+            msg = (
+                f"{role} closed only {fill.filled}/{qty} ({fill.rejected_reason or 'unfilled'}). "
                 "Stopping -- remaining legs untouched. Review manually."
             )
+            print(f"!! {msg}")
+            notify(f"*NIFTY BTST — EXIT PARTIAL* ({today}, {position['entry_date']})\n{msg}")
             ok = False
             break
         print(f"    closed {fill.filled} @ avg {fill.avg_price}")
@@ -113,8 +124,26 @@ def main() -> int:
     if ok and closed >= set(legs):
         update_position(status="CLOSED")
         print("\nLIVE EXIT COMPLETE.")
+
+        final_position = read_position()
+        final_legs = {leg["role"]: leg for leg in final_position["legs"]}
+        total_pnl = gross_pnl(final_legs)
+        lines = [f"*NIFTY BTST — EXIT* ({today}, entry {position['entry_date']})"]
+        for role in ("LONG_ATM", "SHORT_OTM"):
+            leg = final_legs.get(role)
+            if not leg:
+                continue
+            sign = 1 if role == "LONG_ATM" else -1
+            leg_pnl = (leg["exit_price"] - leg["avg_price"]) * leg["quantity"] * sign
+            lines.append(
+                f"{role} {leg['strike']} {position['option_type']}: entry {leg['avg_price']} -> "
+                f"exit {leg['exit_price']} (qty {leg['quantity']}), P&L {leg_pnl:+.2f}"
+            )
+        lines.append(f"*Total Gross P&L: {total_pnl:+.2f}*" if total_pnl is not None else "Total Gross P&L: n/a")
+        notify("\n".join(lines))
+
         try:
-            append_closed_trade(read_position())
+            append_closed_trade(final_position)
             build_pnl.main()
         except Exception as exc:  # noqa: BLE001 -- PnL bookkeeping, must never fail a real exit
             print(f"    WARNING: PnL history/report sync failed ({exc}); trade closed fine regardless.")

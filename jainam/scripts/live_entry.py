@@ -8,6 +8,12 @@ Buying first means a failure at any point leaves you long (defined
 risk), never naked short. Entry uses limit orders only: if the buy can't
 fill, nothing is traded.
 
+Sends a Telegram alert (see notify.py) for every outcome: no-trade,
+full success (with expiry/strikes/fill prices), or a failed/partial
+fill -- the last one most of all, since that's the state that most
+needs a human looking at it immediately. A notify failure never fails
+the trade itself.
+
     python jainam/scripts/live_entry.py
 """
 
@@ -25,6 +31,7 @@ from config import LONG_LEG_LOTS_PER_UNIT, MARKET_HOLIDAYS, SHORT_LEG_LOTS_PER_U
 from jainam.broker.order_exec import execute_order
 from jainam.broker.xts_client import XTSDataClient
 from jainam.entry_signal import NoTrade, compute_entry_signal
+from notify import notify
 from position_store import PositionLeg, read_position, write_no_trade, write_position
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -68,6 +75,7 @@ def main() -> int:
     if isinstance(signal, NoTrade):
         print(f"NO TRADE: {signal.reason}")
         write_no_trade(today, signal.reason, mode="live")
+        notify(f"*NIFTY BTST — NO TRADE* ({today})\n{signal.reason}")
         return 0
 
     long_leg = next(l for l in signal.legs if l["role"] == "LONG_ATM")
@@ -83,6 +91,7 @@ def main() -> int:
         reason = f"ATM buy did not fill ({buy.rejected_reason or 'no fill'}) -- nothing traded"
         print(f"!! {reason}")
         write_no_trade(today, reason, mode="live")
+        notify(f"*NIFTY BTST — ENTRY FAILED* ({today})\n{reason}")
         return 1
 
     def leg_record(leg, fill):
@@ -105,7 +114,13 @@ def main() -> int:
     short_lots = (long_lots_filled // LONG_LEG_LOTS_PER_UNIT) * SHORT_LEG_LOTS_PER_UNIT
     short_qty = short_lots * signal.lot_size
     if short_qty == 0:
-        print("!! Long leg filled too small to pair a short leg -> holding the long leg only.")
+        msg = "Long leg filled too small to pair a short leg -> holding the long leg only."
+        print(f"!! {msg}")
+        notify(
+            f"*NIFTY BTST — ENTRY INCOMPLETE* ({today})\n{msg}\n"
+            f"LONG_ATM {long_leg['strike']} {signal.option_type}: {buy.filled} @ {buy.avg_price}\n"
+            "Review manually -- you are holding an unhedged long."
+        )
         return 1
     if short_qty != short_leg["quantity"]:
         print(f"    scaling short leg to {short_qty} to match the {buy.filled} long fill")
@@ -120,13 +135,26 @@ def main() -> int:
         write_position(today, signal.direction, signal.option_type, signal.expiry, legs, mode="live")
         print(f"    sold {sell.filled} @ avg {sell.avg_price}")
     if sell.filled < short_qty:
-        print(
-            f"!! Short leg incomplete ({sell.filled}/{short_qty}; {sell.rejected_reason or 'unfilled'}). "
+        msg = (
+            f"Short leg incomplete ({sell.filled}/{short_qty}; {sell.rejected_reason or 'unfilled'}). "
             "You are LONG the ATM leg with a smaller/no short leg -- review manually."
+        )
+        print(f"!! {msg}")
+        notify(
+            f"*NIFTY BTST — ENTRY PARTIAL* ({today})\n{msg}\n"
+            f"LONG_ATM {long_leg['strike']} {signal.option_type}: {buy.filled} @ {buy.avg_price}\n"
+            f"SHORT_OTM {short_leg['strike']} {signal.option_type}: {sell.filled}/{short_qty} @ "
+            f"{sell.avg_price if sell.filled else 'n/a'}"
         )
         return 1
 
     print("\nLIVE ENTRY COMPLETE.")
+    notify(
+        f"*NIFTY BTST — ENTRY* ({today}, {signal.direction})\n"
+        f"Expiry: {signal.expiry}\n"
+        f"LONG_ATM {long_leg['strike']} {signal.option_type}: {buy.filled} @ {buy.avg_price}\n"
+        f"SHORT_OTM {short_leg['strike']} {signal.option_type}: {sell.filled} @ {sell.avg_price}"
+    )
     return 0
 
 
