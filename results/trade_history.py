@@ -5,11 +5,11 @@ positions.json (position_store.py) only ever holds the CURRENT position --
 it's overwritten on every entry and gitignored as local run state (see its
 own docstring). Something has to accumulate the full history once a trade
 closes, or there is no PnL to report at all. This file is that something:
-one record appended per fully-closed trade, read by results/build_pnl.py
-to regenerate the PnL workbook. Tracked in git, not gitignored -- same
-choice volume-daily (the project this pattern is based on) makes for its
-own positions_dhan_*.json: this is a permanent ledger, not transient run
-state like positions.json.
+one record appended per fully-closed trade, with gross_pnl() computed here
+and reused by the Telegram exit alert (jainam/scripts/live_exit.py) so
+there's a single source of truth for the P&L formula. Tracked in git, not
+gitignored: this is a permanent ledger, not transient run state like
+positions.json.
 
 trade_history.json lives alongside this file, at results/trade_history.json.
 """
