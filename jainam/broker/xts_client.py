@@ -104,6 +104,7 @@ class XTSDataClient:
         self.interactive_token = interactive_token
         self._interactive_error: str | None = None
         self.client_id: str | None = None  # trading account (e.g. SNM3358), set by from_env
+        self.login_id: str | None = None  # our API login (e.g. SNM3358A21), set by from_env
         self._session = requests.Session()
         self._index_list_cache: dict[int, dict[str, int]] = {}
 
@@ -155,6 +156,7 @@ class XTSDataClient:
         client._session = session
         client._interactive_error = interactive_error
         client.client_id = os.environ.get("JAINAM_CLIENT_ID") or None
+        client.login_id = os.environ.get("JAINAM_LOGIN_ID") or None
         return client
 
     # --- low-level request helpers ----------------------------------------
@@ -487,18 +489,27 @@ class XTSDataClient:
                 return order
         return None
 
-    def get_net_quantity(self, exchange_instrument_id: int) -> int:
-        """Net position quantity for one NSEFO instrument on this client (+long / -short)."""
+    def get_login_net_quantity(self, exchange_instrument_id: int) -> int:
+        """Net quantity TRADED TODAY by our own API login (JAINAM_LOGIN_ID,
+        e.g. SNM3358A21) on one NSEFO instrument (+bought / -sold), from the
+        trade book. Not /portfolio/positions: the client account (SNM3358)
+        is shared with other logins whose positions aren't ours, and
+        positions can't be split by login. Today-only -- callers add any
+        carried quantity from their own records."""
+        if not self.login_id:
+            raise XTSOrderError("JAINAM_LOGIN_ID is not set -- can't tell our trades from other logins'")
         try:
-            data = self._interactive_call("GET", "/interactive/portfolio/positions", params={"dayOrNet": "NetWise"})
+            data = self._interactive_call("GET", "/interactive/orders/trades")
         except XTSOrderError as exc:
             if "Data Not Available" in str(exc):
                 return 0
             raise
         total = 0
-        for row in (data.get("result") or {}).get("positionList", []):
-            if int(row["ExchangeInstrumentId"]) == int(exchange_instrument_id) and row["ExchangeSegment"] == "NSEFO":
-                total += int(float(row["Quantity"]))
+        for row in data.get("result") or []:
+            if (row.get("LoginID") == self.login_id and row.get("ExchangeSegment") == "NSEFO"
+                    and int(row["ExchangeInstrumentID"]) == int(exchange_instrument_id)):
+                qty = int(float(row["LastTradedQuantity"]))
+                total += qty if row["OrderSide"].upper() == "BUY" else -qty
         return total
 
 

@@ -91,11 +91,14 @@ def main() -> int:
             continue
         qty, token = leg["quantity"], leg["instrument_token"]
 
-        # Cross-check against the real account before trading anything.
-        net = client.get_net_quantity(token)
-        print(f"\n{role}: {leg['tradingsymbol']} recorded qty {qty}, account net {net:+d}")
+        # Cross-check against OUR login's trades only (the client account is
+        # shared with other logins). Entry was on an earlier day, so start
+        # from the recorded quantity and apply today's trades by our login
+        # (e.g. a manual close earlier today).
+        net = sign * qty + client.get_login_net_quantity(token)
+        print(f"\n{role}: {leg['tradingsymbol']} recorded qty {qty}, {client.login_id} net {net:+d}")
         if net * sign < qty:
-            msg = f"Account holds {net:+d} but {sign * qty:+d} was expected -> NOT trading {role}. Review manually."
+            msg = f"{client.login_id} holds {net:+d} but {sign * qty:+d} was expected -> NOT trading {role}. Review manually."
             print(f"!! {msg}")
             notify(f"*NIFTY BTST — EXIT STOPPED* ({today}, {position['entry_date']})\n{msg}")
             ok = False
