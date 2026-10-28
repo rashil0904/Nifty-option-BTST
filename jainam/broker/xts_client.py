@@ -52,12 +52,20 @@ STILL UNVERIFIED / KNOWN GAPS:
 """
 
 import os
+import sys
 import time as _time_module
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 import requests
+
+# Shared across every strategy on this box trading through the same
+# Jainam account (this project, wednesday_nifty, nifty-strangle-options)
+# -- see SessionInvalidatedError's docstring below. All three must point
+# at the SAME module (default path here) for this to coordinate anything.
+sys.path.insert(0, "/root/shared_jainam")
+import session_cache as _session_cache  # noqa: E402
 from dotenv import load_dotenv
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -76,6 +84,29 @@ class XTSOrderError(Exception):
 
 class CandleNotFoundError(Exception):
     """Raised when the expected candle isn't present in the OHLC response."""
+
+
+class SessionInvalidatedError(Exception):
+    """Jainam rejected our token (e-session-0007 / 0005).
+
+    XTS allows ONE live session per API key, and other projects on this box
+    (nifty-strangle-options, weekly-credit watchdog) log in with the same
+    keys -- each of their logins kills our token. The request was rejected
+    before processing, so re-logging in and retrying is safe (orders too).
+    This is what crashed the 2026-10-28 15:20 live entry.
+    """
+
+
+# 0007 "Invalid Token" (market data), 0005 "Token/Authorization not found" (interactive)
+SESSION_INVALID_CODES = {"e-session-0007", "e-session-0005"}
+# The keys can't be split per project (user decision 2026-10-28), so clashes
+# are a fact of life: be persistent rather than fail a live run.
+SESSION_RETRIES = 10
+LOGIN_RETRIES = 5
+
+
+def _backoff(attempt: int) -> None:
+    _time_module.sleep(min(0.5 * attempt, 3.0))
 
 
 @dataclass(frozen=True)
@@ -107,6 +138,8 @@ class XTSDataClient:
         self.login_id: str | None = None  # our API login (e.g. SNM3358A21), set by from_env
         self._session = requests.Session()
         self._index_list_cache: dict[int, dict[str, int]] = {}
+        self._relogin_market = None  # set by from_env; see SessionInvalidatedError
+        self._relogin_interactive = None
 
     @classmethod
     def from_env(cls, env_path: str | None = None) -> "XTSDataClient":
@@ -136,25 +169,76 @@ class XTSDataClient:
             raise RuntimeError(f"Missing in .env: {', '.join(missing)}")
 
         session = requests.Session()
-        market_token = _login(
-            session, base_url, "/apibinarymarketdata/auth/login", market_api_key, market_api_secret, source
-        )
-
-        interactive_token = None
-        interactive_error = None
-        if interactive_api_key and interactive_api_secret:
-            try:
-                interactive_token = _login(
-                    session, base_url, "/interactive/user/session", interactive_api_key, interactive_api_secret, source
+        # Reuse another process's still-live session if one is cached;
+        # only log in (which would kick that other process out) if
+        # nothing usable is shared yet.
+        with _session_cache.FileLock():
+            cached = _session_cache.read_cache(base_url)
+            if cached:
+                market_token = cached["market_token"]
+                interactive_token = cached["interactive_token"]
+                interactive_error = None
+            else:
+                market_token = _login(
+                    session, base_url, "/apibinarymarketdata/auth/login", market_api_key, market_api_secret, source
                 )
-            except Exception as exc:  # noqa: BLE001 -- deliberately deferred, see docstring
-                interactive_error = str(exc)
-        else:
-            interactive_error = "JAINAM_INTERACTIVE_API_KEY/SECRET not set in .env"
+                interactive_token = None
+                interactive_error = None
+                if interactive_api_key and interactive_api_secret:
+                    try:
+                        interactive_token = _login(
+                            session, base_url, "/interactive/user/session",
+                            interactive_api_key, interactive_api_secret, source,
+                        )
+                    except Exception as exc:  # noqa: BLE001 -- deliberately deferred, see docstring
+                        interactive_error = str(exc)
+                else:
+                    interactive_error = "JAINAM_INTERACTIVE_API_KEY/SECRET not set in .env"
+                if interactive_token:  # only cache a pair that's actually usable by others
+                    _session_cache.write_cache(base_url, market_token, interactive_token)
 
         client = cls(base_url=base_url, market_token=market_token, interactive_token=interactive_token)
         client._session = session
         client._interactive_error = interactive_error
+
+        def _relogin_market() -> str:
+            """Adopt a token another process already refreshed, or log
+            in ourselves (under the shared lock, so two processes never
+            both log in and keep kicking each other out)."""
+            stale = client.market_token
+            with _session_cache.FileLock():
+                cached = _session_cache.read_cache(base_url)
+                if cached and cached["market_token"] != stale:
+                    new_token = cached["market_token"]
+                else:
+                    new_token = _login(
+                        session, base_url, "/apibinarymarketdata/auth/login",
+                        market_api_key, market_api_secret, source,
+                    )
+                interactive_for_cache = cached["interactive_token"] if cached else client.interactive_token
+                if interactive_for_cache:
+                    _session_cache.write_cache(base_url, new_token, interactive_for_cache)
+            return new_token
+
+        client._relogin_market = _relogin_market
+
+        if interactive_api_key and interactive_api_secret:
+            def _relogin_interactive() -> str:
+                stale = client.interactive_token
+                with _session_cache.FileLock():
+                    cached = _session_cache.read_cache(base_url)
+                    if cached and cached["interactive_token"] != stale:
+                        new_token = cached["interactive_token"]
+                    else:
+                        new_token = _login(
+                            session, base_url, "/interactive/user/session",
+                            interactive_api_key, interactive_api_secret, source,
+                        )
+                    market_for_cache = cached["market_token"] if cached else client.market_token
+                    _session_cache.write_cache(base_url, market_for_cache, new_token)
+                return new_token
+
+            client._relogin_interactive = _relogin_interactive
         client.client_id = os.environ.get("JAINAM_CLIENT_ID") or None
         client.login_id = os.environ.get("JAINAM_LOGIN_ID") or None
         return client
@@ -162,13 +246,35 @@ class XTSDataClient:
     # --- low-level request helpers ----------------------------------------
 
     def _market_get(self, path: str, params: dict) -> dict:
-        return _request(self._session, "GET", self.base_url, path, self.market_token, params=params)
+        return self._market_request("GET", path, params=params)
 
     def _market_post(self, path: str, body: dict) -> dict:
-        return _request(self._session, "POST", self.base_url, path, self.market_token, json_body=body)
+        return self._market_request("POST", path, json_body=body)
+
+    def _market_request(self, method: str, path: str, **kwargs) -> dict:
+        # Market data calls are reads, so a dropped connection is retried too.
+        for attempt in range(SESSION_RETRIES + 1):
+            try:
+                return _request(self._session, method, self.base_url, path, self.market_token, **kwargs)
+            except (SessionInvalidatedError, requests.ConnectionError, requests.Timeout) as exc:
+                if self._relogin_market is None or attempt == SESSION_RETRIES:
+                    raise
+                print(f"    market call {path} failed ({exc}) -> re-login, retry {attempt + 1}/{SESSION_RETRIES}")
+                _backoff(attempt + 1)
+                self.market_token = self._relogin_market()
 
     def _interactive_get(self, path: str, params: dict) -> dict:
-        return _request(self._session, "GET", self.base_url, path, self.interactive_token, params=params)
+        for attempt in range(SESSION_RETRIES + 1):
+            try:
+                if self.interactive_token is None and self._relogin_interactive is not None:
+                    self.interactive_token = self._relogin_interactive()
+                return _request(self._session, "GET", self.base_url, path, self.interactive_token, params=params)
+            except (SessionInvalidatedError, requests.ConnectionError, requests.Timeout) as exc:
+                if self._relogin_interactive is None or attempt == SESSION_RETRIES:
+                    raise
+                print(f"    interactive call {path} failed ({exc}) -> re-login, retry {attempt + 1}/{SESSION_RETRIES}")
+                _backoff(attempt + 1)
+                self.interactive_token = self._relogin_interactive()
 
     # --- VIX -----------------------------------------------------------
 
@@ -406,31 +512,54 @@ class XTSDataClient:
 
     def _interactive_call(self, method: str, path: str, params: dict | None = None, body: dict | None = None) -> dict:
         """Interactive request that keeps Jainam's error body and rides out 429 rate limits."""
+        if not self.interactive_token and self._relogin_interactive is not None:
+            self.interactive_token = self._relogin_interactive()  # startup login failed -- try again now
         if not self.interactive_token:
             raise XTSOrderError(f"Interactive API session not available: {self._interactive_error}")
         params = dict(params or {})
         if self.client_id:
             params.setdefault("clientID", self.client_id)
-        for attempt in range(5):
-            response = self._session.request(
-                method,
-                self.base_url + path,
-                headers={"Content-Type": "application/json", "Authorization": self.interactive_token},
-                params=params or None,
-                json=body,
-                timeout=15,
-            )
+        rate_limited = relogins = 0
+        while True:
+            try:
+                response = self._session.request(
+                    method,
+                    self.base_url + path,
+                    headers={"Content-Type": "application/json", "Authorization": self.interactive_token},
+                    params=params or None,
+                    json=body,
+                    timeout=15,
+                )
+            except (requests.ConnectionError, requests.Timeout):
+                # Only reads are retried blind; a POST/DELETE may have landed --
+                # place_order does its own order-book lookup for that case.
+                if method != "GET" or relogins >= SESSION_RETRIES:
+                    raise
+                relogins += 1
+                print(f"    {method} {path}: connection failed -> retry {relogins}/{SESSION_RETRIES}")
+                _backoff(relogins)
+                continue
             if response.status_code == 429:  # rejected before processing -- safe to retry
-                _time_module.sleep(2 * (attempt + 1))
+                rate_limited += 1
+                if rate_limited > 5:
+                    raise XTSOrderError(f"{method} {path}: still rate limited (429) after retries")
+                _time_module.sleep(2 * rate_limited)
                 continue
             try:
                 data = response.json()
             except ValueError:
                 raise XTSOrderError(f"{method} {path}: HTTP {response.status_code} {response.text[:200]}")
+            if (data.get("code") in SESSION_INVALID_CODES and self._relogin_interactive is not None
+                    and relogins < SESSION_RETRIES):
+                # Token rejected before processing -- safe to retry, even an order.
+                relogins += 1
+                print(f"    interactive token invalidated on {method} {path} -> re-login, retry {relogins}/{SESSION_RETRIES}")
+                _backoff(relogins)
+                self.interactive_token = self._relogin_interactive()
+                continue
             if response.status_code >= 400 or data.get("type") == "error":
                 raise XTSOrderError(f"{method} {path}: {data.get('code')} {data.get('description')}")
             return data
-        raise XTSOrderError(f"{method} {path}: still rate limited (429) after retries")
 
     def place_order(
         self,
@@ -514,18 +643,24 @@ class XTSDataClient:
 
 
 def _login(session: requests.Session, base_url: str, path: str, app_key: str, secret_key: str, source: str) -> str:
-    data = _request(
-        session,
-        "POST",
-        base_url,
-        path,
-        token=None,
-        json_body={"appKey": app_key, "secretKey": secret_key, "source": source},
-    )
-    try:
-        return data["result"]["token"]
-    except KeyError as exc:
-        raise RuntimeError(f"Login to {path} did not return a token: {data}") from exc
+    """Log in, retrying any failure -- a login has no side effects beyond the
+    session swap, and a clash/blip here would otherwise fail the whole run."""
+    for attempt in range(1, LOGIN_RETRIES + 1):
+        try:
+            data = _request(
+                session,
+                "POST",
+                base_url,
+                path,
+                token=None,
+                json_body={"appKey": app_key, "secretKey": secret_key, "source": source},
+            )
+            return data["result"]["token"]
+        except Exception as exc:  # noqa: BLE001 -- any failure: try again, raise the last one
+            if attempt == LOGIN_RETRIES:
+                raise RuntimeError(f"Login to {path} failed {LOGIN_RETRIES} times, last: {exc}") from exc
+            print(f"    login to {path} failed ({exc}) -> retry {attempt}/{LOGIN_RETRIES - 1}")
+            _backoff(attempt)
 
 
 def _request(
@@ -543,6 +678,17 @@ def _request(
     response = session.request(
         method, base_url.rstrip("/") + path, headers=headers, params=params, json=json_body, timeout=10
     )
+    if response.status_code >= 400:
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        if body.get("code") in SESSION_INVALID_CODES:
+            raise SessionInvalidatedError(f"{path}: {body.get('description')}")
+        if body:  # keep Jainam's reason -- a bare "400 Bad Request" hid the cause on 2026-10-28
+            raise requests.HTTPError(
+                f"{response.status_code} on {path}: {body.get('code')} {body.get('description')}", response=response
+            )
     response.raise_for_status()
     data = response.json()
     if data.get("type") == "error":
