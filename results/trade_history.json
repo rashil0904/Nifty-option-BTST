@@ -1,0 +1,101 @@
+[
+  {
+    "entry_date": "2026-10-27",
+    "direction": "GREEN",
+    "option_type": "CE",
+    "expiry": "2026-11-03",
+    "legs": {
+      "LONG_ATM": {
+        "role": "LONG_ATM",
+        "strike": 22750.0,
+        "instrument_token": 53792,
+        "tradingsymbol": "NIFTY 03NOV2026 CE 22750",
+        "quantity": 130,
+        "avg_price": 229.62,
+        "exit_quantity": 130,
+        "exit_price": 128.05,
+        "exit_timestamp": "2026-10-28T09:18:04.515089+05:30"
+      },
+      "SHORT_OTM": {
+        "role": "SHORT_OTM",
+        "strike": 23050.0,
+        "instrument_token": 53924,
+        "tradingsymbol": "NIFTY 03NOV2026 CE 23050",
+        "quantity": 65,
+        "avg_price": 81.4,
+        "exit_quantity": 65,
+        "exit_price": 47.7,
+        "exit_timestamp": "2026-10-28T09:18:02.257294+05:30"
+      }
+    },
+    "exit_date": "2026-10-28",
+    "gross_pnl": -11013.6,
+    "archived_at": "2026-10-28T09:18:05.229943+05:30"
+  },
+  {
+    "entry_date": "2026-10-28",
+    "direction": "GREEN",
+    "option_type": "CE",
+    "expiry": "2026-11-03",
+    "legs": {
+      "LONG_ATM": {
+        "role": "LONG_ATM",
+        "strike": 22700.0,
+        "instrument_token": 53782,
+        "tradingsymbol": "NIFTY 03NOV2026 CE 22700",
+        "quantity": 130,
+        "avg_price": 180.6,
+        "exit_quantity": 130,
+        "exit_price": 178.0,
+        "exit_timestamp": "2026-10-29T09:18:03.731525+05:30"
+      },
+      "SHORT_OTM": {
+        "role": "SHORT_OTM",
+        "strike": 23000.0,
+        "instrument_token": 53872,
+        "tradingsymbol": "NIFTY 03NOV2026 CE 23000",
+        "quantity": 65,
+        "avg_price": 63.5,
+        "exit_quantity": 65,
+        "exit_price": 60.5,
+        "exit_timestamp": "2026-10-29T09:18:03.513857+05:30"
+      }
+    },
+    "exit_date": "2026-10-29",
+    "gross_pnl": -143.0,
+    "archived_at": "2026-10-29T09:18:04.450668+05:30"
+  },
+  {
+    "entry_date": "2026-10-29",
+    "direction": "GREEN",
+    "option_type": "CE",
+    "expiry": "2026-11-03",
+    "legs": {
+      "LONG_ATM": {
+        "role": "LONG_ATM",
+        "strike": 22950.0,
+        "instrument_token": 53860,
+        "tradingsymbol": "NIFTY26N0322950CE",
+        "quantity": 130,
+        "avg_price": 149.0,
+        "exit_quantity": 130,
+        "exit_price": 135.35,
+        "exit_timestamp": "2026-10-30T09:18:03.954634+05:30"
+      },
+      "SHORT_OTM": {
+        "role": "SHORT_OTM",
+        "strike": 23250.0,
+        "instrument_token": 53932,
+        "tradingsymbol": "NIFTY26N0323250CE",
+        "quantity": 65,
+        "avg_price": 35.05,
+        "exit_quantity": 65,
+        "exit_price": 31.3,
+        "exit_timestamp": "2026-10-30T09:18:03.733831+05:30"
+      }
+    },
+    "exit_date": "2026-10-30",
+    "gross_pnl": -1530.75,
+    "archived_at": "2026-10-30T09:18:04.658477+05:30"
+  }
+]

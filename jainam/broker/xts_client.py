@@ -97,8 +97,11 @@ class SessionInvalidatedError(Exception):
     """
 
 
-# 0007 "Invalid Token" (market data), 0005 "Token/Authorization not found" (interactive)
-SESSION_INVALID_CODES = {"e-session-0007", "e-session-0005"}
+# 0007 "Invalid Token" (market data), 0005 "Token/Authorization not found" (interactive),
+# 0006 "Token/Authorization not found" (market data -- found live 2026-10-29: a cached
+# market token that had gone stale overnight hit this code, not 0007, and fell through
+# to a plain HTTPError since it wasn't in this set -- no retry/re-login was attempted).
+SESSION_INVALID_CODES = {"e-session-0007", "e-session-0005", "e-session-0006"}
 # The keys can't be split per project (user decision 2026-10-28), so clashes
 # are a fact of life: be persistent rather than fail a live run.
 SESSION_RETRIES = 10

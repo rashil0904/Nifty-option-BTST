@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(timeout 60 .venv/bin/python -)",
+      "Bash(xargs -I{} sh -c 'echo \"== {}\"; cat {}')",
+      "Bash(timeout 90 .venv/bin/python -)",
+      "Bash(.venv/bin/python -)",
+      "Bash(timeout 120 .venv/bin/python -)",
+      "Bash(timeout 180 .venv/bin/python -)"
+    ]
+  }
+}
